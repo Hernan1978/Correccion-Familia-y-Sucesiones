@@ -98,7 +98,7 @@ if st.button("🚀 INICIAR CORRECCIÓN"):
 
                     # LLAMADA AL MODELO (Actualizado 2026)
                     chat_completion = client.chat.completions.create(
-                       model="llama-3.3-70b-specdec",
+                    model="llama-3.3-70b-versatile",
                         messages=mensajes,
                         temperature=0.2 # Menos creatividad, más precisión
                     )
