@@ -40,10 +40,10 @@ archivos = st.file_uploader("Suba los PDFs o Word de los alumnos",
                             type=['pdf', 'docx'], 
                             accept_multiple_files=True)
 
-# 4. PROCESAMIENTO
+# 4. PROCESAMIENTO (VERSIÓN ESTABLE 2026)
 if st.button("🚀 INICIAR CORRECCIÓN"):
     if not api_key or not archivos or not consigna:
-        st.error("Por favor, complete la API Key, las preguntas y suba al menos un archivo.")
+        st.error("Falta configuración (API Key, Consigna o Archivos).")
     else:
         lista_resultados = []
         barra_progreso = st.progress(0)
@@ -51,65 +51,56 @@ if st.button("🚀 INICIAR CORRECCIÓN"):
         for index, arc in enumerate(archivos):
             with st.spinner(f"Analizando: {arc.name}..."):
                 texto_extraido = ""
-                imagenes_paginas = []
 
                 try:
-                    # Procesar PDF
+                    # Extraer solo texto (más seguro y rápido)
                     if arc.name.endswith('.pdf'):
                         documento = fitz.open(stream=arc.read(), filetype="pdf")
                         for pagina in documento:
                             texto_extraido += pagina.get_text()
-                            # Capturar imagen de la página para visión
-                            pix = pagina.get_pixmap()
-                            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                            imagenes_paginas.append(preparar_imagen(img))
-                    # Procesar Word
                     else:
                         texto_extraido = docx2txt.process(arc)
 
                     client = Groq(api_key=api_key)
                     
-                    # Instrucciones para la IA
+                    # Instrucción clara para el modelo 3.3-70b
                     instruccion = f"""
-                    Actúa como un profesor de Derecho riguroso. 
-                    Evalúa el examen comparándolo con la RESPUESTA MODELO.
-                    
+                    Actúa como un profesor de Derecho experto. Evalúa este examen.
                     CONSIGNA: {consigna}
                     RESPUESTA MODELO: {respuesta_modelo}
                     
                     TAREA:
-                    1. Analiza cada punto por separado.
-                    2. Evalúa texto y esquemas gráficos si los hay.
-                    3. Para cada punto indica: [BIEN/REGULAR/MAL] + Justificación.
-                    4. Al final da una NOTA FINAL: (MAL, REGULAR, BIEN, MUY BIEN, EXCELENTE).
+                    1. Analiza cada pregunta por separado.
+                    2. Para cada punto indica: [BIEN/REGULAR/MAL] y justifica.
+                    3. Al final da una NOTA FINAL (MAL a EXCELENTE).
                     """
 
-                    # Estructura de mensajes compatible con Llama 3.2 Vision
-                    contenido_usuario = [{"type": "text", "text": f"{instruccion}\n\nTEXTO DEL EXAMEN:\n{texto_extraido}"}]
-                    
-                    # Añadir hasta 3 páginas como imágenes
-                    for b64 in imagenes_paginas[:3]:
-                        contenido_usuario.append({
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
-                        })
-
-                    mensajes = [{"role": "user", "content": contenido_usuario}]
-
-                    # LLAMADA AL MODELO (Actualizado 2026)
+                    # ENVIAR SOLO TEXTO (Esto evita el error de 'must be a string')
                     chat_completion = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                        messages=mensajes,
-                        temperature=0.2 # Menos creatividad, más precisión
+                        model="llama-3.3-70b-versatile",
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": f"{instruccion}\n\nTEXTO DEL ALUMNO:\n{texto_extraido}"
+                            }
+                        ],
+                        temperature=0.2
                     )
 
                     analisis = chat_completion.choices[0].message.content
-                    lista_resultados.append({"Alumno/Archivo": arc.name, "Evaluación": analisis})
+                    lista_resultados.append({"Alumno": arc.name, "Evaluación": analisis})
                 
                 except Exception as e:
-                    lista_resultados.append({"Alumno/Archivo": arc.name, "Evaluación": f"Error: {str(e)}"})
+                    lista_resultados.append({"Alumno": arc.name, "Evaluación": f"Error técnico: {str(e)}"})
                 
                 barra_progreso.progress((index + 1) / len(archivos))
+
+        # 5. RESULTADOS
+        st.divider()
+        st.header("📊 Resultados")
+        for res in lista_resultados:
+            with st.expander(f"📝 Examen: {res['Alumno']}"):
+                st.markdown(res['Evaluación'])
 
         # 5. RESULTADOS
         st.divider()
