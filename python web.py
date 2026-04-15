@@ -96,21 +96,15 @@ if st.button("🚀 INICIAR CORRECCIÓN"):
                 
                 barra_progreso.progress((index + 1) / len(archivos))
 
-        # 5. RESULTADOS
+ # 5. RESULTADOS (CORREGIDO PARA EVITAR KEYERROR)
         st.divider()
         st.header("📊 Resultados")
         for res in lista_resultados:
-            with st.expander(f"📝 Examen: {res['Alumno']}"):
-                st.markdown(res['Evaluación'])
-
-        # 5. RESULTADOS
-        st.divider()
-        st.header("📊 Resultados")
-        for res in lista_resultados:
-            with st.expander(f"📝 Examen: {res['Alumno/Archivo']}"):
+            # Usamos 'Archivo' que es un nombre estándar
+            with st.expander(f"📝 Examen: {res['Archivo']}"):
                 st.markdown(res['Evaluación'])
         
         if lista_resultados:
             df = pd.DataFrame(lista_resultados)
             csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Descargar Planilla Excel", csv, "notas_catedra.csv", "text/csv")
+            st.download_button("📥 Descargar Planilla", csv, "notas_catedra.csv", "text/csv")
