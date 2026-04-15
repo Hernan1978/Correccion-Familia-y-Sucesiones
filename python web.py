@@ -40,7 +40,7 @@ archivos = st.file_uploader("Suba los PDFs o Word de los alumnos",
                             type=['pdf', 'docx'], 
                             accept_multiple_files=True)
 
-# 4. PROCESAMIENTO (VERSIÓN ESTABLE 2026)
+# 4. PROCESAMIENTO (VERSIÓN OPTIMIZADA PARA EVITAR LÍMITES)
 if st.button("🚀 INICIAR CORRECCIÓN"):
     if not api_key or not archivos or not consigna:
         st.error("Falta configuración (API Key, Consigna o Archivos).")
@@ -51,9 +51,7 @@ if st.button("🚀 INICIAR CORRECCIÓN"):
         for index, arc in enumerate(archivos):
             with st.spinner(f"Analizando: {arc.name}..."):
                 texto_extraido = ""
-
                 try:
-                    # Extraer solo texto (más seguro y rápido)
                     if arc.name.endswith('.pdf'):
                         documento = fitz.open(stream=arc.read(), filetype="pdf")
                         for pagina in documento:
@@ -61,37 +59,40 @@ if st.button("🚀 INICIAR CORRECCIÓN"):
                     else:
                         texto_extraido = docx2txt.process(arc)
 
+                    # --- RECORTE DE SEGURIDAD PARA NO SUPERAR EL LÍMITE ---
+                    # Limitamos el texto del alumno a unos 8000 caracteres (aprox 2000 palabras)
+                    # Esto deja espacio para la consigna y la respuesta de la IA.
+                    texto_recortado = texto_extraido[:8000] 
+
                     client = Groq(api_key=api_key)
                     
-                    # Instrucción clara para el modelo 3.3-70b
                     instruccion = f"""
-                    Actúa como un profesor de Derecho experto. Evalúa este examen.
+                    Actúa como profesor de Derecho. Sé conciso pero preciso.
                     CONSIGNA: {consigna}
-                    RESPUESTA MODELO: {respuesta_modelo}
+                    MODELO: {respuesta_modelo}
                     
                     TAREA:
-                    1. Analiza cada pregunta por separado.
-                    2. Para cada punto indica: [BIEN/REGULAR/MAL] y justifica.
-                    3. Al final da una NOTA FINAL (MAL a EXCELENTE).
+                    - Evalúa cada punto (BIEN/REGULAR/MAL).
+                    - Da una nota final.
                     """
 
-                    # ENVIAR SOLO TEXTO (Esto evita el error de 'must be a string')
                     chat_completion = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
                         messages=[
                             {
                                 "role": "user",
-                                "content": f"{instruccion}\n\nTEXTO DEL ALUMNO:\n{texto_extraido}"
+                                "content": f"{instruccion}\n\nEXAMEN:\n{texto_recortado}"
                             }
                         ],
-                        temperature=0.2
+                        temperature=0.2,
+                        max_tokens=1500  # Limitamos el largo de la respuesta de la IA para ahorrar
                     )
 
                     analisis = chat_completion.choices[0].message.content
                     lista_resultados.append({"Alumno": arc.name, "Evaluación": analisis})
                 
                 except Exception as e:
-                    lista_resultados.append({"Alumno": arc.name, "Evaluación": f"Error técnico: {str(e)}"})
+                    lista_resultados.append({"Alumno": arc.name, "Evaluación": f"Error: {str(e)}"})
                 
                 barra_progreso.progress((index + 1) / len(archivos))
 
