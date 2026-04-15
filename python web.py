@@ -75,7 +75,7 @@ if st.button("🚀 INICIAR CORRECCIÓN INTEGRAL"):
                         })
 
                     res = client.chat.completions.create(
-                        model="llama-3-2-90b-vision-preview",
+                        model="llama-3.3-70b-versatile",
                         messages=mensajes
                     )
                     
