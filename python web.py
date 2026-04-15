@@ -3,108 +3,77 @@ from groq import Groq
 import docx2txt
 import fitz  # PyMuPDF
 import pandas as pd
-import base64
-from io import BytesIO
-from PIL import Image
 
-# 1. CONFIGURACIÓN DE LA PÁGINA
+# 1. CONFIGURACIÓN
 st.set_page_config(page_title="Asistente de Cátedra", layout="wide")
-
 st.title("⚖️ Sistema de Corrección de Cátedra")
-st.markdown("### Herramienta de Evaluación Automática (Texto y Gráficos)")
 
-# 2. PANEL LATERAL: CONFIGURACIÓN DEL DOCENTE
 with st.sidebar:
     st.header("⚙️ Configuración")
     api_key = st.text_input("Groq API Key", type="password")
     st.divider()
-    
-    st.subheader("📝 Definición del Examen")
-    consigna = st.text_area("Preguntas oficiales (numeradas):", 
-                            placeholder="1. Explique...\n2. Dibuje...", height=150)
-    
-    respuesta_modelo = st.text_area("Criterios de Corrección / Respuesta Ideal:", 
-                                   placeholder="Punto 1: El alumno debe decir...\nPunto 2: El gráfico debe mostrar...", height=150)
-    
-    st.info("Escala: MAL, REGULAR, BIEN, MUY BIEN, EXCELENTE.")
+    consigna = st.text_area("Preguntas oficiales:", height=150)
+    respuesta_modelo = st.text_area("Respuesta Ideal:", height=150)
 
-# Función para convertir imagen para la IA
-def preparar_imagen(image):
-    buffered = BytesIO()
-    image.save(buffered, format="JPEG")
-    return base64.b64encode(buffered.getvalue()).decode('utf-8')
+# 2. CARGA
+archivos = st.file_uploader("Suba los exámenes", type=['pdf', 'docx'], accept_multiple_files=True)
 
-# 3. CARGA DE ARCHIVOS
-st.header("📂 Cargar Exámenes")
-archivos = st.file_uploader("Suba los PDFs o Word de los alumnos", 
-                            type=['pdf', 'docx'], 
-                            accept_multiple_files=True)
-
-# 4. PROCESAMIENTO (VERSIÓN OPTIMIZADA PARA EVITAR LÍMITES)
+# 3. PROCESAMIENTO
 if st.button("🚀 INICIAR CORRECCIÓN"):
     if not api_key or not archivos or not consigna:
-        st.error("Falta configuración (API Key, Consigna o Archivos).")
+        st.error("Falta completar datos.")
     else:
         lista_resultados = []
         barra_progreso = st.progress(0)
         
         for index, arc in enumerate(archivos):
             with st.spinner(f"Analizando: {arc.name}..."):
-                texto_extraido = ""
                 try:
+                    # Extraer texto
                     if arc.name.endswith('.pdf'):
-                        documento = fitz.open(stream=arc.read(), filetype="pdf")
-                        for pagina in documento:
-                            texto_extraido += pagina.get_text()
+                        doc = fitz.open(stream=arc.read(), filetype="pdf")
+                        texto = "".join([pagina.get_text() for pagina in doc])
                     else:
-                        texto_extraido = docx2txt.process(arc)
+                        texto = docx2txt.process(arc)
 
-                    # --- RECORTE DE SEGURIDAD PARA NO SUPERAR EL LÍMITE ---
-                    # Limitamos el texto del alumno a unos 8000 caracteres (aprox 2000 palabras)
-                    # Esto deja espacio para la consigna y la respuesta de la IA.
-                    texto_recortado = texto_extraido[:8000] 
+                    # Recorte de seguridad para evitar el error de tokens (413)
+                    texto_final = texto[:7000] 
 
                     client = Groq(api_key=api_key)
                     
-                    instruccion = f"""
-                    Actúa como profesor de Derecho. Sé conciso pero preciso.
-                    CONSIGNA: {consigna}
-                    MODELO: {respuesta_modelo}
-                    
-                    TAREA:
-                    - Evalúa cada punto (BIEN/REGULAR/MAL).
-                    - Da una nota final.
-                    """
-
-                    chat_completion = client.chat.completions.create(
+                    # Llamada a la IA (Modelo estable 2026)
+                    completion = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": f"{instruccion}\n\nEXAMEN:\n{texto_recortado}"
-                            }
-                        ],
+                        messages=[{
+                            "role": "user", 
+                            "content": f"Evalúa como docente. Consigna: {consigna}. Modelo: {respuesta_modelo}. Examen: {texto_final}"
+                        }],
                         temperature=0.2,
-                        max_tokens=1500  # Limitamos el largo de la respuesta de la IA para ahorrar
+                        max_tokens=1000
                     )
 
-                    analisis = chat_completion.choices[0].message.content
-                    lista_resultados.append({"Alumno": arc.name, "Evaluación": analisis})
+                    analisis = completion.choices[0].message.content
+                    
+                    # AQUÍ ESTÁ LA CLAVE: Guardamos con el nombre 'NombreArchivo'
+                    lista_resultados.append({
+                        "NombreArchivo": arc.name, 
+                        "Evaluación": analisis
+                    })
                 
                 except Exception as e:
-                    lista_resultados.append({"Alumno": arc.name, "Evaluación": f"Error: {str(e)}"})
+                    lista_resultados.append({
+                        "NombreArchivo": arc.name, 
+                        "Evaluación": f"Error: {str(e)}"
+                    })
                 
                 barra_progreso.progress((index + 1) / len(archivos))
 
- # 5. RESULTADOS (CORREGIDO PARA EVITAR KEYERROR)
+        # 4. RESULTADOS (Usando exactamente 'NombreArchivo')
         st.divider()
-        st.header("📊 Resultados")
         for res in lista_resultados:
-            # Usamos 'Archivo' que es un nombre estándar
-            with st.expander(f"📝 Examen: {res['Archivo']}"):
+            with st.expander(f"📝 Examen: {res['NombreArchivo']}"):
                 st.markdown(res['Evaluación'])
         
         if lista_resultados:
             df = pd.DataFrame(lista_resultados)
-            csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Descargar Planilla", csv, "notas_catedra.csv", "text/csv")
+            st.download_button("📥 Descargar Planilla", df.to_csv(index=False).encode('utf-8'), "notas.csv")
