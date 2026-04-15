@@ -1,112 +1,70 @@
 import streamlit as st
 from groq import Groq
 import docx2txt
-import fitz  # PyMuPDF
+import fitz
 import pandas as pd
+import json
 
-# 1. CONFIGURACIÓN E INTERFAZ
-st.set_page_config(page_title="Cátedra IA Pro", layout="wide")
-st.title("⚖️ Sistema de Corrección con Semáforo")
+st.set_page_config(page_title="Corrector Pro", layout="wide")
+st.title("⚖️ Sistema de Evaluación de Cátedra")
 
 with st.sidebar:
     st.header("⚙️ Configuración")
     api_key = st.text_input("Groq API Key", type="password")
-    st.divider()
-    consigna = st.text_area("Preguntas oficiales:", height=150)
-    respuesta_modelo = st.text_area("Criterios de Corrección:", height=150)
+    consigna = st.text_area("Preguntas:")
+    modelo = st.text_area("Criterios:")
 
-# 2. CARGA DE ARCHIVOS
-archivos = st.file_uploader("Suba los exámenes", type=['pdf', 'docx'], accept_multiple_files=True)
+archivos = st.file_uploader("Subir exámenes", type=['pdf', 'docx'], accept_multiple_files=True)
 
-# 3. PROCESAMIENTO
-if st.button("🚀 INICIAR EVALUACIÓN"):
-    if not api_key or not archivos or not consigna:
-        st.error("Faltan datos (Clave, Consignas o Archivos).")
+if st.button("🚀 CORREGIR AHORA"):
+    if not api_key or not archivos:
+        st.error("Faltan datos.")
     else:
-        resultados_finales = []
-        barra_progreso = st.progress(0)
+        resultados = []
+        for arc in archivos:
+            with st.spinner(f"Corrigiendo {arc.name}..."):
+                # Extracción de texto
+                if arc.name.endswith('.pdf'):
+                    doc = fitz.open(stream=arc.read(), filetype="pdf")
+                    texto = "".join([p.get_text() for p in doc])
+                else:
+                    texto = docx2txt.process(arc)
+
+                client = Groq(api_key=api_key)
+                # Forzamos a la IA a responder en formato de base de datos (JSON)
+                prompt = f"""
+                Evalúa el examen según la consigna y el modelo.
+                Responde ÚNICAMENTE en formato JSON con estas claves:
+                "alumno", "p1_nota", "p2_nota", "p3_nota", "nota_final", "justificacion".
+                Usa para las notas: BIEN, REGULAR o MAL. 
+                Para nota_final usa: EXCELENTE, MUY BIEN, BIEN, REGULAR, INSUFICIENTE.
+                
+                Consigna: {consigna}
+                Modelo: {modelo}
+                Examen: {texto[:7000]}
+                """
+                
+                response = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"}
+                )
+                
+                # Convertimos la respuesta de la IA en datos para la tabla
+                datos = json.loads(response.choices[0].message.content)
+                datos["Archivo"] = arc.name
+                resultados.append(datos)
+
+        # MOSTRAR TABLA
+        df = pd.DataFrame(resultados)
         
-        for index, arc in enumerate(archivos):
-            with st.spinner(f"Analizando: {arc.name}..."):
-                try:
-                    if arc.name.endswith('.pdf'):
-                        doc = fitz.open(stream=arc.read(), filetype="pdf")
-                        texto = "".join([p.get_text() for p in doc])
-                    else:
-                        texto = docx2txt.process(arc)
-
-                    texto_final = texto[:7000]
-                    client = Groq(api_key=api_key)
-                    
-                    # PROMPT ESTRUCTURADO PARA TABULACIÓN
-                    prompt_sistema = f"""
-                    Actúa como profesor de Derecho. Evalúa el examen.
-                    CONSIGNA: {consigna}
-                    MODELO: {respuesta_modelo}
-                    
-                    Responde siguiendo estrictamente este esquema:
-                    NOMBRE: [Nombre del alumno]
-                    P1: [BIEN/REGULAR/MAL]
-                    P2: [BIEN/REGULAR/MAL]
-                    P3: [BIEN/REGULAR/MAL]
-                    FINAL: [EXCELENTE, MUY BIEN, BIEN, REGULAR o INSUFICIENTE]
-                    JUSTIFICACION: [Resumen breve de la corrección]
-                    """
-
-                    completion = client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
-                        messages=[{"role": "user", "content": f"{prompt_sistema}\n\nEXAMEN:\n{texto_final}"}],
-                        temperature=0.2
-                    )
-
-                    analisis = completion.choices[0].message.content
-                    resultados_finales.append({"Archivo": arc.name, "Detalle": analisis})
-                
-                except Exception as e:
-                    resultados_finales.append({"Archivo": arc.name, "Detalle": f"Error: {str(e)}"})
-                
-                barra_progreso.progress((index + 1) / len(archivos))
-
-       # 4. TABLA CON SEMÁFORO TEXTUAL (ESPACIOS CORREGIDOS)
-        st.divider()
-        st.header("📊 Cuadro de Calificaciones")
-
-        def aplicar_semaforo(val):
+        def s(val):
             v = str(val).upper()
-            if any(x in v for x in ["BIEN", "EXCELENTE"]): color = '#d4edda' # Verde
-            elif "REGULAR" in v: color = '#fff3cd' # Amarillo
-            elif any(x in v for x in ["MAL", "INSUFICIENTE"]): color = '#f8d7da' # Rojo
-            else: color = 'white'
-            return f'background-color: {color}'
+            if "BIEN" in v or "EXCELENTE" in v: c = '#d4edda'
+            elif "REGULAR" in v: c = '#fff3cd'
+            else: c = '#f8d7da'
+            return f'background-color: {c}'
 
-        resumen_data = []
-        for r in resultados_finales:
-            d = r['Detalle']
-            try:
-                nombre = d.split("NOMBRE:")[1].split("\n")[0].strip()
-                p1 = d.split("P1:")[1].split("\n")[0].strip()
-                p2 = d.split("P2:")[1].split("\n")[0].strip()
-                p3 = d.split("P3:")[1].split("\n")[0].strip()
-                final = d.split("FINAL:")[1].split("\n")[0].strip()
-                resumen_data.append({
-                    "Alumno": nombre, 
-                    "P1": p1, "P2": p2, "P3": p3, 
-                    "Nota Final": final,
-                    "Archivo": r['Archivo']
-                })
-            except:
-                resumen_data.append({"Alumno": "Error formato", "P1": "-", "P2": "-", "P3": "-", "Nota Final": "REVISAR", "Archivo": r['Archivo']})
-
-        df = pd.DataFrame(resumen_data)
-
-        # AQUÍ ESTABA EL ERROR DE SANGRÍA (AHORA CORREGIDO)
-        if not df.empty:
-            st.dataframe(df.style.map(aplicar_semaforo, subset=['P1', 'P2', 'P3', 'Nota Final']), use_container_width=True)
-            st.download_button("📥 Descargar Planilla", df.to_csv(index=False).encode('utf-8'), "notas.csv")
-            
-       # 5. DETALLE INDIVIDUAL
-        with st.expander("🔍 Ver justificaciones detalladas"):
-            for res in resultados_finales:
-                st.subheader(f"Examen: {res['Archivo']}")
-                st.text(res['Detalle'])
-                st.divider()
+        st.header("📊 Notas Finales")
+        st.dataframe(df.style.map(s, subset=["p1_nota", "p2_nota", "p3_nota", "nota_final"]), use_container_width=True)
+        st.download_button("📥 Excel", df.to_csv(index=False).encode('utf-8'), "notas.csv")
