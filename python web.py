@@ -67,7 +67,7 @@ if st.button("🚀 INICIAR EVALUACIÓN"):
                 
                 barra_progreso.progress((index + 1) / len(archivos))
 
-        # 4. TABLA CON SEMÁFORO TEXTUAL
+       # 4. TABLA CON SEMÁFORO TEXTUAL (ESPACIOS CORREGIDOS)
         st.divider()
         st.header("📊 Cuadro de Calificaciones")
 
@@ -79,11 +79,9 @@ if st.button("🚀 INICIAR EVALUACIÓN"):
             else: color = 'white'
             return f'background-color: {color}'
 
-        # Procesar los datos para la tabla
         resumen_data = []
         for r in resultados_finales:
             d = r['Detalle']
-            # Extracción simple de cada campo
             try:
                 nombre = d.split("NOMBRE:")[1].split("\n")[0].strip()
                 p1 = d.split("P1:")[1].split("\n")[0].strip()
@@ -97,22 +95,15 @@ if st.button("🚀 INICIAR EVALUACIÓN"):
                     "Archivo": r['Archivo']
                 })
             except:
-                resumen_data.append({"Alumno": "Error formato", "Nota Final": "REVISAR", "Archivo": r['Archivo']})
+                resumen_data.append({"Alumno": "Error formato", "P1": "-", "P2": "-", "P3": "-", "Nota Final": "REVISAR", "Archivo": r['Archivo']})
 
         df = pd.DataFrame(resumen_data)
 
+        # AQUÍ ESTABA EL ERROR DE SANGRÍA (AHORA CORREGIDO)
         if not df.empty:
-            # Mostramos la tabla con el semáforo aplicado a todas las columnas de notas
-            if not df.empty:
-            # Cambiamos applymap por map que es la versión moderna
             st.dataframe(df.style.map(aplicar_semaforo, subset=['P1', 'P2', 'P3', 'Nota Final']), use_container_width=True)
-            
-            # Botón de descarga
             st.download_button("📥 Descargar Planilla", df.to_csv(index=False).encode('utf-8'), "notas.csv")
             
-            # Botón de descarga
-            st.download_button("📥 Descargar Planilla", df.to_csv(index=False).encode('utf-8'), "notas.csv")
-
        # 5. DETALLE INDIVIDUAL
         with st.expander("🔍 Ver justificaciones detalladas"):
             for res in resultados_finales:
