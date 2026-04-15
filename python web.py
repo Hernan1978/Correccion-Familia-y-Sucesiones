@@ -1,63 +1,90 @@
 import streamlit as st
 from groq import Groq
 import docx2txt
-import PyPDF2
+import fitz  # PyMuPDF para manejar imágenes en PDFs
+import pandas as pd
+import base64
+from io import BytesIO
+from PIL import Image
 
-st.set_page_config(page_title="Cátedra Familia y Sucesiones", page_icon="⚖️")
+st.set_page_config(page_title="Asistente de Cátedra con Visión", layout="wide")
 
-# --- CONTRASEÑA DOCENTE ---
-PWD = "catedra_derecho" 
+st.title("⚖️ Corrector Privado con Visión Artificial")
+st.write("Este asistente lee textos y analiza esquemas o dibujos en los exámenes.")
 
-if "consigna" not in st.session_state: st.session_state.consigna = ""
-if "modelo" not in st.session_state: st.session_state.modelo = ""
-
+# --- BARRA LATERAL ---
 with st.sidebar:
-    st.title("Panel de Control")
+    st.header("Configuración")
     api_key = st.text_input("Groq API Key", type="password")
-    st.divider()
-    ingreso_pwd = st.text_input("Clave Docente", type="password")
+    consigna = st.text_area("Preguntas del examen:", height=100)
+    respuesta_modelo = st.text_area("Criterios/Respuesta Ideal:", height=100)
+    st.info("Escala: MAL, REGULAR, BIEN, MUY BIEN, EXCELENTE.")
 
-# --- MODO DOCENTE (Configuración) ---
-if ingreso_pwd == PWD:
-    st.header("👨‍🏫 Configuración del TP")
-    st.session_state.consigna = st.text_area("Pregunta/Caso:", value=st.session_state.consigna)
-    st.session_state.modelo = st.text_area("Respuesta Correcta (Modelo):", value=st.session_state.modelo)
-    st.success("Configuración activa. Los alumnos verán esto.")
-    st.divider()
+# --- FUNCIÓN PARA PROCESAR IMÁGENES ---
+def encode_image(image):
+    buffered = BytesIO()
+    image.save(buffered, format="JPEG")
+    return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-# --- MODO ALUMNO (Interfaz Principal) ---
-st.title("⚖️ Entrega de TP: Familia y Sucesiones")
-mail = st.text_input("Mail Institucional")
+# --- CARGA DE EXÁMENES ---
+archivos = st.file_uploader("Subí los exámenes (PDF/DOCX)", type=['pdf', 'docx'], accept_multiple_files=True)
 
-if not st.session_state.consigna:
-    st.info("Esperando que el docente habilite el TP...")
-else:
-    st.warning(f"**CONSIGNA:** {st.session_state.consigna}")
-    archivo = st.file_uploader("Subí tu TP (PDF o Word)", type=['pdf', 'docx'])
+if st.button("🚀 INICIAR CORRECCIÓN INTEGRAL"):
+    if not api_key or not archivos:
+        st.error("Faltan datos obligatorios.")
+    else:
+        resultados = []
+        client = Groq(api_key=api_key)
+        
+        for archivo in archivos:
+            with st.spinner(f"Analizando {archivo.name}..."):
+                texto_total = ""
+                base64_images = []
 
-    if st.button("Enviar para Corrección Automática"):
-        if not mail or not archivo:
-            st.error("Completá tu mail y subí el archivo.")
-        else:
-            with st.spinner("Corrigiendo..."):
-                # Leer texto del archivo
-                texto_alumno = ""
-                if archivo.type == "application/pdf":
-                    reader = PyPDF2.PdfReader(archivo)
-                    for page in reader.pages: texto_alumno += page.extract_text()
+                if archivo.name.endswith('.pdf'):
+                    # Extraer texto e imágenes del PDF
+                    doc = fitz.open(stream=archivo.read(), filetype="pdf")
+                    for page in doc:
+                        texto_total += page.get_text()
+                        # Convertir página a imagen para que la IA la "vea"
+                        pix = page.get_pixmap()
+                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                        base64_images.append(encode_image(img))
                 else:
-                    texto_alumno = docx2txt.process(archivo)
+                    texto_total = docx2txt.process(archivo)
 
-                # Llamar a la IA
                 try:
-                    client = Groq(api_key=api_key)
-                    prompt = f"Sos profesor de Derecho. Corregí este TP basándote en la RESPUESTA MODELO.\n\nMODELO: {st.session_state.modelo}\n\nALUMNO: {texto_alumno}\n\nEntrega Nota del 1 al 10 y breve fundamento jurídico."
+                    # Instrucciones para la IA con Visión
+                    prompt = f"Sos un profesor de Derecho. Evaluá este examen.\nCONSIGNA: {consigna}\nMODELO: {respuesta_modelo}\nTEXTO EXTRAÍDO: {texto_total}\nAnalizá también las imágenes adjuntas (esquemas, árboles genealógicos o cuadros). Calificá de MAL a EXCELENTE y justificá."
                     
+                    # Llamada al modelo de visión
+                    mensajes = [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                            ]
+                        }
+                    ]
+                    
+                    # Agregamos las imágenes al mensaje si existen
+                    for b64 in base64_images[:3]: # Limitamos a las primeras 3 páginas para evitar errores
+                        mensajes[0]["content"].append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
+                        })
+
                     res = client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
-                        messages=[{"role": "user", "content": prompt}]
+                        model="llama-3.2-11b-vision-preview",
+                        messages=mensajes
                     )
-                    st.success(f"Evaluación para {mail}:")
-                    st.markdown(res.choices[0].message.content)
+                    
+                    respuesta = res.choices[0].message.content
+                    resultados.append({"Archivo": archivo.name, "Resultado": respuesta})
+                
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    resultados.append({"Archivo": archivo.name, "Resultado": f"Error: {e}"})
+
+        # Mostrar tabla final
+        st.header("Planilla de Calificaciones")
+        st.table(pd.DataFrame(resultados))
