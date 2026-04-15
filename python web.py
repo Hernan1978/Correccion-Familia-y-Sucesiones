@@ -103,7 +103,12 @@ if st.button("🚀 INICIAR EVALUACIÓN"):
 
         if not df.empty:
             # Mostramos la tabla con el semáforo aplicado a todas las columnas de notas
-            st.dataframe(df.style.applymap(aplicar_semaforo, subset=['P1', 'P2', 'P3', 'Nota Final']), use_container_width=True)
+            if not df.empty:
+            # Cambiamos applymap por map que es la versión moderna
+            st.dataframe(df.style.map(aplicar_semaforo, subset=['P1', 'P2', 'P3', 'Nota Final']), use_container_width=True)
+            
+            # Botón de descarga
+            st.download_button("📥 Descargar Planilla", df.to_csv(index=False).encode('utf-8'), "notas.csv")
             
             # Botón de descarga
             st.download_button("📥 Descargar Planilla", df.to_csv(index=False).encode('utf-8'), "notas.csv")
