@@ -120,7 +120,7 @@ if st.button("🚀 PROCESAR Y CORREGIR"):
             
             # Mostramos la tabla con colores
             st.dataframe(
-                df[["alumno"] + cols_notas].style.applymap(aplicar_color_semaforo, subset=cols_notas),
+                df[["alumno"] + cols_notas].style.map(aplicar_color_semaforo, subset=cols_notas),
                 use_container_width=True
             )
 
