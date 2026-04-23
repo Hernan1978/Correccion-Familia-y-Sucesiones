@@ -4,4 +4,4 @@ python-docx
 docx2txt
 pymupdf
 pandas
-fpdf
+fpdf2
