@@ -5,119 +5,128 @@ import fitz
 import pandas as pd
 import json
 import time
-from fpdf import FPDF # Librería para generar PDFs
+from fpdf import FPDF
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Sistema de Evaluación Detallada", layout="wide")
-st.title("⚖️ Corrector de Cátedra con Reporte PDF")
+# --- CONFIGURACIÓN ---
+st.set_page_config(page_title="Corrector Pro Dinámico", layout="wide")
+st.title("⚖️ Sistema de Evaluación Integral")
 
-# --- FUNCIÓN PARA GENERAR PDF ---
-def generar_pdf(datos_alumno):
+def generar_pdf_dinamico(datos_alumno):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, "Reporte de Evaluación Académica", ln=True, align='C')
+    pdf.cell(0, 10, "Reporte de Evaluación Académica", ln=True, align='C')
     pdf.ln(10)
     
-    # Datos del Alumno
+    # Encabezado
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, f"Alumno: {datos_alumno['alumno']}", ln=True)
-    pdf.set_font("Arial", '', 11)
-    pdf.cell(200, 10, f"Archivo: {datos_alumno['Archivo']}", ln=True)
+    pdf.cell(0, 10, f"Alumno: {datos_alumno.get('alumno', 'N/A')}", ln=True)
+    pdf.set_font("Arial", '', 10)
+    pdf.cell(0, 10, f"Archivo original: {datos_alumno.get('Archivo', 'N/A')}", ln=True)
     pdf.ln(5)
     
-    # Preguntas Detalladas
-    for p in ["p1", "p2", "p3"]:
-        pdf.set_font("Arial", 'B', 11)
-        pdf.cell(200, 10, f"Evaluación {p.upper()}:", ln=True)
-        pdf.set_font("Arial", '', 11)
-        # Multi_cell para que el texto no se salga de la hoja
-        pdf.multi_cell(0, 10, f"Resultado: {datos_alumno[f'{p}_nota']}\nComentario: {datos_alumno[f'{p}_comentario']}")
-        pdf.ln(2)
+    # Recorrer preguntas dinámicamente
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, "Desglose de Calificaciones:", ln=True)
+    pdf.ln(2)
+    
+    # Buscamos en el diccionario todo lo que empiece con "P" seguido de número
+    for clave, valor in datos_alumno.items():
+        if clave.startswith('P') and '_nota' in clave:
+            num_pregunta = clave.split('_')[0] # Extrae "P1", "P2", etc.
+            comentario = datos_alumno.get(f"{num_pregunta}_comentario", "Sin comentario.")
+            
+            pdf.set_font("Arial", 'B', 11)
+            pdf.cell(0, 8, f"Pregunta {num_pregunta[1:]}: {valor}", ln=True)
+            pdf.set_font("Arial", 'I', 10)
+            pdf.multi_cell(0, 7, f"Observaciones: {comentario}")
+            pdf.ln(3)
 
-    pdf.ln(5)
+    pdf.ln(10)
     pdf.set_font("Arial", 'B', 14)
-    pdf.cell(200, 10, f"NOTA FINAL: {datos_alumno['nota_final']}", ln=True, align='C')
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(0, 15, f"NOTA FINAL: {datos_alumno.get('nota_final', 'S/N')}", ln=True, align='C', fill=True)
     
-    return pdf.output(dest='S').encode('latin-1')
+    return pdf.output()
 
-# --- INTERFAZ ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Configuración")
     api_key = st.text_input("Groq API Key", type="password")
-    consigna = st.text_area("Preguntas del Examen (P1, P2, P3...):")
-    modelo = st.text_area("Respuesta Ideal / Criterios:")
+    consigna = st.text_area("Cargue aquí todas las preguntas:")
+    modelo = st.text_area("Criterios/Respuestas esperadas:")
 
-archivos_subidos = st.file_uploader("Subir exámenes de alumnos", type=['pdf', 'docx'], accept_multiple_files=True)
+archivos = st.file_uploader("Exámenes (PDF/DOCX)", accept_multiple_files=True)
 
-if st.button("🚀 INICIAR CORRECCIÓN DETALLADA"):
-    if not api_key or not archivos_subidos:
-        st.error("Faltan datos o archivos.")
+if st.button("🚀 INICIAR PROCESAMIENTO"):
+    if not api_key or not archivos:
+        st.error("Faltan datos.")
     else:
-        lista_final = []
+        resultados_lista = []
         barra = st.progress(0)
         
-        for idx, arc in enumerate(archivos_subidos):
+        for idx, arc in enumerate(archivos):
             try:
-                # Leer archivo
+                # Lectura de archivo
                 if arc.name.endswith('.pdf'):
                     doc = fitz.open(stream=arc.read(), filetype="pdf")
-                    texto_examen = "".join([p.get_text() for p in doc])
+                    texto = "".join([p.get_text() for p in doc])
                 else:
-                    texto_examen = docx2txt.process(arc)
+                    texto = docx2txt.process(arc)
 
-                # Prompt para análisis por pregunta
                 client = Groq(api_key=api_key)
+                # Prompt Dinámico: Le pedimos que cree llaves P1, P2... Pn
                 prompt = f"""
-                Eres un profesor de Derecho. Analiza el examen y devuelve UN SOLO JSON con esta estructura:
-                {{
-                  "alumno": "nombre",
-                  "p1_nota": "BIEN/REGULAR/MAL", "p1_comentario": "...",
-                  "p2_nota": "BIEN/REGULAR/MAL", "p2_comentario": "...",
-                  "p3_nota": "BIEN/REGULAR/MAL", "p3_comentario": "...",
-                  "nota_final": "EXCELENTE/MUY BIEN/BIEN/REGULAR/INSUFICIENTE"
-                }}
+                Evalúa el examen. Crea un objeto JSON con el nombre del alumno, nota final y un desglose 
+                para CADA pregunta detectada (P1, P2, P3, etc.) con su nota (BIEN/REGULAR/MAL) y comentario.
+                
+                IMPORTANTE: Usa el formato: 
+                "P1_nota": "...", "P1_comentario": "...", 
+                "P2_nota": "...", "P2_comentario": "..." (así sucesivamente).
+                
                 Consigna: {consigna}
                 Criterios: {modelo}
-                Examen: {texto_examen[:6000]}
+                Examen: {texto[:7000]}
                 """
                 
-                response = client.chat.completions.create(
+                resp = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=[{"role": "user", "content": prompt}],
                     response_format={"type": "json_object"}
                 )
                 
-                res_json = json.loads(response.choices[0].message.content)
-                res_json["Archivo"] = arc.name
-                lista_final.append(res_json)
-                time.sleep(1) # Pausa de seguridad
+                res_dict = json.loads(resp.choices[0].message.content)
+                res_dict["Archivo"] = arc.name
+                resultados_lista.append(res_dict)
+                time.sleep(1.5)
                 
             except Exception as e:
-                st.error(f"Error con {arc.name}: {e}")
+                st.error(f"Error en {arc.name}: {e}")
             
-            barra.progress((idx + 1) / len(archivos_subidos))
+            barra.progress((idx + 1) / len(archivos))
 
-        # --- MOSTRAR RESULTADOS ---
-        if lista_final:
-            df = pd.DataFrame(lista_final)
-            st.header("📊 Planilla General")
-            st.dataframe(df[["alumno", "p1_nota", "p2_nota", "p3_nota", "nota_final"]], use_container_width=True)
+        # --- RESULTADOS ---
+        if resultados_lista:
+            st.header("📋 Resultados Detallados")
+            df = pd.DataFrame(resultados_lista)
+            # Mostrar solo columnas principales en la tabla general
+            cols_principales = [c for c in df.columns if 'comentario' not in c and c != 'Archivo']
+            st.dataframe(df[cols_principales], use_container_width=True)
 
             st.divider()
-            st.header("📥 Descargar Reportes Individuales (PDF)")
-            
-            for alumno_data in lista_final:
-                col1, col2 = st.columns([3, 1])
+            for alu in resultados_lista:
+                col1, col2 = st.columns([4, 1])
                 with col1:
-                    st.write(f"**{alumno_data['alumno']}** - Nota Final: {alumno_data['nota_final']}")
+                    st.write(f"📄 **Reporte:** {alu.get('alumno', 'S/N')} ({alu['Archivo']})")
                 with col2:
-                    # Botón para descargar el PDF generado en el momento
-                    pdf_bytes = generar_pdf(alumno_data)
-                    st.download_button(
-                        label="📄 Descargar PDF",
-                        data=pdf_bytes,
-                        file_name=f"Correccion_{alumno_data['alumno']}.pdf",
-                        mime="application/pdf",
-                        key=f"btn_{alumno_data['Archivo']}"
-                    )
+                    try:
+                        pdf_data = generar_pdf_dinamico(alu)
+                        st.download_button(
+                            "Descargar PDF",
+                            data=pdf_data,
+                            file_name=f"Correccion_{alu.get('alumno','alu')}.pdf",
+                            mime="application/pdf",
+                            key=f"pdf_{alu['Archivo']}"
+                        )
+                    except Exception as e:
+                        st.write("Error PDF")
