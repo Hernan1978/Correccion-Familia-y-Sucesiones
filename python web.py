@@ -11,43 +11,51 @@ from fpdf import FPDF
 st.set_page_config(page_title="Corrector Pro Dinámico", layout="wide")
 st.title("⚖️ Sistema de Evaluación Integral")
 
+# --- FUNCIÓN PDF CORREGIDA ---
 def generar_pdf_dinamico(datos_alumno):
+    # Usamos 'latin-1' o configuramos para que ignore errores de caracteres
     pdf = FPDF()
     pdf.add_page()
+    
+    # Título
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, "Reporte de Evaluación Académica", ln=True, align='C')
+    pdf.cell(0, 10, "Reporte de Evaluacion Academica".encode('latin-1', 'ignore').decode('latin-1'), ln=True, align='C')
     pdf.ln(10)
     
     # Encabezado
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, f"Alumno: {datos_alumno.get('alumno', 'N/A')}", ln=True)
+    nombre = str(datos_alumno.get('alumno', 'S/N')).encode('latin-1', 'ignore').decode('latin-1')
+    pdf.cell(0, 10, f"Alumno: {nombre}", ln=True)
+    
     pdf.set_font("Arial", '', 10)
-    pdf.cell(0, 10, f"Archivo original: {datos_alumno.get('Archivo', 'N/A')}", ln=True)
+    archivo = str(datos_alumno.get('Archivo', 'S/N')).encode('latin-1', 'ignore').decode('latin-1')
+    pdf.cell(0, 10, f"Archivo original: {archivo}", ln=True)
     pdf.ln(5)
     
-    # Recorrer preguntas dinámicamente
+    # Desglose
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, "Desglose de Calificaciones:", ln=True)
+    pdf.cell(0, 10, "Desglose de Calificaciones:".encode('latin-1', 'ignore').decode('latin-1'), ln=True)
     pdf.ln(2)
     
-    # Buscamos en el diccionario todo lo que empiece con "P" seguido de número
-    for clave, valor in datos_alumno.items():
+    # Buscamos preguntas dinámicamente
+    for clave in sorted(datos_alumno.keys()):
         if clave.startswith('P') and '_nota' in clave:
-            num_pregunta = clave.split('_')[0] # Extrae "P1", "P2", etc.
-            comentario = datos_alumno.get(f"{num_pregunta}_comentario", "Sin comentario.")
+            num_pregunta = clave.split('_')[0]
+            nota = str(datos_alumno[clave]).encode('latin-1', 'ignore').decode('latin-1')
+            comentario = str(datos_alumno.get(f"{num_pregunta}_comentario", "Sin comentario")).encode('latin-1', 'ignore').decode('latin-1')
             
             pdf.set_font("Arial", 'B', 11)
-            pdf.cell(0, 8, f"Pregunta {num_pregunta[1:]}: {valor}", ln=True)
+            pdf.cell(0, 8, f"Pregunta {num_pregunta[1:]}: {nota}", ln=True)
             pdf.set_font("Arial", 'I', 10)
             pdf.multi_cell(0, 7, f"Observaciones: {comentario}")
             pdf.ln(3)
 
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 14)
-    pdf.set_fill_color(240, 240, 240)
-    pdf.cell(0, 15, f"NOTA FINAL: {datos_alumno.get('nota_final', 'S/N')}", ln=True, align='C', fill=True)
+    nota_final = str(datos_alumno.get('nota_final', 'S/N')).encode('latin-1', 'ignore').decode('latin-1')
+    pdf.cell(0, 15, f"NOTA FINAL: {nota_final}", ln=True, align='C')
     
-    return pdf.output()
+    return pdf.output(dest='S')
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -75,14 +83,9 @@ if st.button("🚀 INICIAR PROCESAMIENTO"):
                     texto = docx2txt.process(arc)
 
                 client = Groq(api_key=api_key)
-                # Prompt Dinámico: Le pedimos que cree llaves P1, P2... Pn
                 prompt = f"""
                 Evalúa el examen. Crea un objeto JSON con el nombre del alumno, nota final y un desglose 
                 para CADA pregunta detectada (P1, P2, P3, etc.) con su nota (BIEN/REGULAR/MAL) y comentario.
-                
-                IMPORTANTE: Usa el formato: 
-                "P1_nota": "...", "P1_comentario": "...", 
-                "P2_nota": "...", "P2_comentario": "..." (así sucesivamente).
                 
                 Consigna: {consigna}
                 Criterios: {modelo}
@@ -98,7 +101,7 @@ if st.button("🚀 INICIAR PROCESAMIENTO"):
                 res_dict = json.loads(resp.choices[0].message.content)
                 res_dict["Archivo"] = arc.name
                 resultados_lista.append(res_dict)
-                time.sleep(1.5)
+                time.sleep(1)
                 
             except Exception as e:
                 st.error(f"Error en {arc.name}: {e}")
@@ -109,24 +112,22 @@ if st.button("🚀 INICIAR PROCESAMIENTO"):
         if resultados_lista:
             st.header("📋 Resultados Detallados")
             df = pd.DataFrame(resultados_lista)
-            # Mostrar solo columnas principales en la tabla general
             cols_principales = [c for c in df.columns if 'comentario' not in c and c != 'Archivo']
             st.dataframe(df[cols_principales], use_container_width=True)
 
             st.divider()
             for alu in resultados_lista:
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    st.write(f"📄 **Reporte:** {alu.get('alumno', 'S/N')} ({alu['Archivo']})")
-                with col2:
-                    try:
-                        pdf_data = generar_pdf_dinamico(alu)
-                        st.download_button(
-                            "Descargar PDF",
-                            data=pdf_data,
-                            file_name=f"Correccion_{alu.get('alumno','alu')}.pdf",
-                            mime="application/pdf",
-                            key=f"pdf_{alu['Archivo']}"
-                        )
-                    except Exception as e:
-                        st.write("Error PDF")
+                nombre_display = alu.get('alumno', 'S/N')
+                st.write(f"📄 **Reporte:** {nombre_display} ({alu['Archivo']})")
+                
+                try:
+                    pdf_bytes = generar_pdf_dinamico(alu)
+                    st.download_button(
+                        label=f"Descargar PDF de {nombre_display}",
+                        data=pdf_bytes,
+                        file_name=f"Correccion_{nombre_display}.pdf",
+                        mime="application/pdf",
+                        key=f"pdf_{alu['Archivo']}_{idx}"
+                    )
+                except Exception as e:
+                    st.error(f"No se pudo generar este PDF específico por un error de caracteres.")
