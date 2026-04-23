@@ -7,88 +7,90 @@ import json
 import time
 from fpdf import FPDF
 
-# --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Corrector Pro Dinámico", layout="wide")
-st.title("⚖️ Sistema de Evaluación Integral")
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="Corrector Cátedra Pro", layout="wide")
+st.title("⚖️ Sistema de Evaluación: Familia y Sucesiones")
 
-# --- FUNCIÓN PDF CORREGIDA ---
-def generar_pdf_dinamico(datos_alumno):
-    # Usamos 'latin-1' o configuramos para que ignore errores de caracteres
+# --- FUNCIÓN PARA EL PDF ---
+def generar_pdf_bytes(datos_alumno):
     pdf = FPDF()
     pdf.add_page()
-    
-    # Título
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, "Reporte de Evaluacion Academica".encode('latin-1', 'ignore').decode('latin-1'), ln=True, align='C')
+    pdf.set_font("Helvetica", 'B', 16)
+    pdf.cell(0, 10, "Informe de Calificación Detallado", ln=True, align='C')
     pdf.ln(10)
     
-    # Encabezado
-    pdf.set_font("Arial", 'B', 12)
-    nombre = str(datos_alumno.get('alumno', 'S/N')).encode('latin-1', 'ignore').decode('latin-1')
-    pdf.cell(0, 10, f"Alumno: {nombre}", ln=True)
-    
-    pdf.set_font("Arial", '', 10)
-    archivo = str(datos_alumno.get('Archivo', 'S/N')).encode('latin-1', 'ignore').decode('latin-1')
-    pdf.cell(0, 10, f"Archivo original: {archivo}", ln=True)
+    # Info Alumno
+    pdf.set_font("Helvetica", 'B', 12)
+    pdf.cell(0, 10, f"Alumno: {datos_alumno.get('alumno', 'S/N')}", ln=True)
+    pdf.set_font("Helvetica", '', 10)
+    pdf.cell(0, 10, f"Archivo: {datos_alumno.get('Archivo', 'S/N')}", ln=True)
     pdf.ln(5)
     
-    # Desglose
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, "Desglose de Calificaciones:".encode('latin-1', 'ignore').decode('latin-1'), ln=True)
-    pdf.ln(2)
+    # Desglose Dinámico
+    pdf.set_font("Helvetica", 'B', 12)
+    pdf.cell(0, 10, "Evaluacion por Puntos:", ln=True)
     
-    # Buscamos preguntas dinámicamente
-    for clave in sorted(datos_alumno.keys()):
-        if clave.startswith('P') and '_nota' in clave:
-            num_pregunta = clave.split('_')[0]
-            nota = str(datos_alumno[clave]).encode('latin-1', 'ignore').decode('latin-1')
-            comentario = str(datos_alumno.get(f"{num_pregunta}_comentario", "Sin comentario")).encode('latin-1', 'ignore').decode('latin-1')
-            
-            pdf.set_font("Arial", 'B', 11)
-            pdf.cell(0, 8, f"Pregunta {num_pregunta[1:]}: {nota}", ln=True)
-            pdf.set_font("Arial", 'I', 10)
-            pdf.multi_cell(0, 7, f"Observaciones: {comentario}")
-            pdf.ln(3)
+    claves = sorted([k for k in datos_alumno.keys() if k.startswith('P') and '_nota' in k])
+    for clave in claves:
+        num = clave.split('_')[0]
+        nota = datos_alumno[clave]
+        comentario = datos_alumno.get(f"{num}_comentario", "Sin observaciones adicionales.")
+        
+        pdf.set_font("Helvetica", 'B', 11)
+        pdf.cell(0, 8, f"Pregunta {num[1:]}: {nota}", ln=True)
+        pdf.set_font("Helvetica", '', 10)
+        pdf.multi_cell(0, 7, f"Comentario: {comentario}")
+        pdf.ln(2)
 
     pdf.ln(10)
-    pdf.set_font("Arial", 'B', 14)
-    nota_final = str(datos_alumno.get('nota_final', 'S/N')).encode('latin-1', 'ignore').decode('latin-1')
-    pdf.cell(0, 15, f"NOTA FINAL: {nota_final}", ln=True, align='C')
+    pdf.set_font("Helvetica", 'B', 14)
+    pdf.cell(0, 15, f"NOTA FINAL: {datos_alumno.get('nota_final', 'S/N')}", ln=True, align='C', border=1)
     
-    return pdf.output(dest='S')
+    return pdf.output()
+
+# --- ESTILO DE SEMÁFORO PARA LA TABLA ---
+def aplicar_color_semaforo(val):
+    v = str(val).upper()
+    if any(x in v for x in ["BIEN", "EXCELENTE", "MUY BIEN"]): color = '#d4edda' # Verde
+    elif "REGULAR" in v: color = '#fff3cd' # Amarillo
+    elif any(x in v for x in ["MAL", "INSUFICIENTE"]): color = '#f8d7da' # Rojo
+    else: color = 'white'
+    return f'background-color: {color}'
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Configuración")
     api_key = st.text_input("Groq API Key", type="password")
-    consigna = st.text_area("Cargue aquí todas las preguntas:")
-    modelo = st.text_area("Criterios/Respuestas esperadas:")
+    consigna = st.text_area("Consigna del Examen:")
+    modelo = st.text_area("Criterios de Corrección:")
 
-archivos = st.file_uploader("Exámenes (PDF/DOCX)", accept_multiple_files=True)
+archivos = st.file_uploader("Subir exámenes", accept_multiple_files=True)
 
-if st.button("🚀 INICIAR PROCESAMIENTO"):
+if st.button("🚀 PROCESAR Y CORREGIR"):
     if not api_key or not archivos:
         st.error("Faltan datos.")
     else:
-        resultados_lista = []
+        resultados_totales = []
         barra = st.progress(0)
         
         for idx, arc in enumerate(archivos):
             try:
-                # Lectura de archivo
+                # Leer Archivo
                 if arc.name.endswith('.pdf'):
                     doc = fitz.open(stream=arc.read(), filetype="pdf")
                     texto = "".join([p.get_text() for p in doc])
                 else:
                     texto = docx2txt.process(arc)
 
+                # IA - Análisis Detallado
                 client = Groq(api_key=api_key)
                 prompt = f"""
-                Evalúa el examen. Crea un objeto JSON con el nombre del alumno, nota final y un desglose 
-                para CADA pregunta detectada (P1, P2, P3, etc.) con su nota (BIEN/REGULAR/MAL) y comentario.
+                Evalúa el examen. Crea un JSON con:
+                "alumno", "nota_final", y para cada pregunta (P1, P2, P3...) crea:
+                "P#_nota": "BIEN/REGULAR/MAL" y "P#_comentario": "explicación".
                 
                 Consigna: {consigna}
-                Criterios: {modelo}
+                Modelo: {modelo}
                 Examen: {texto[:7000]}
                 """
                 
@@ -98,9 +100,9 @@ if st.button("🚀 INICIAR PROCESAMIENTO"):
                     response_format={"type": "json_object"}
                 )
                 
-                res_dict = json.loads(resp.choices[0].message.content)
-                res_dict["Archivo"] = arc.name
-                resultados_lista.append(res_dict)
+                datos = json.loads(resp.choices[0].message.content)
+                datos["Archivo"] = arc.name
+                resultados_totales.append(datos)
                 time.sleep(1)
                 
             except Exception as e:
@@ -108,26 +110,34 @@ if st.button("🚀 INICIAR PROCESAMIENTO"):
             
             barra.progress((idx + 1) / len(archivos))
 
-        # --- RESULTADOS ---
-        if resultados_lista:
-            st.header("📋 Resultados Detallados")
-            df = pd.DataFrame(resultados_lista)
-            cols_principales = [c for c in df.columns if 'comentario' not in c and c != 'Archivo']
-            st.dataframe(df[cols_principales], use_container_width=True)
+        # --- MOSTRAR RESULTADOS (LA CONFIGURACIÓN QUE TE GUSTÓ) ---
+        if resultados_totales:
+            st.header("📊 Cuadro de Calificaciones")
+            df = pd.DataFrame(resultados_totales)
+            
+            # Filtramos solo las columnas de notas para el semáforo
+            cols_notas = [c for c in df.columns if '_nota' in c or c == 'nota_final']
+            
+            # Mostramos la tabla con colores
+            st.dataframe(
+                df[["alumno"] + cols_notas].style.applymap(aplicar_color_semaforo, subset=cols_notas),
+                use_container_width=True
+            )
 
             st.divider()
-            for alu in resultados_lista:
-                nombre_display = alu.get('alumno', 'S/N')
-                st.write(f"📄 **Reporte:** {nombre_display} ({alu['Archivo']})")
-                
-                try:
-                    pdf_bytes = generar_pdf_dinamico(alu)
+            st.header("📥 Descarga de Devoluciones Detalladas")
+            
+            for res in resultados_totales:
+                c1, c2 = st.columns([3, 1])
+                nombre_alu = res.get('alumno', 'S/N')
+                with c1:
+                    st.write(f"📄 **{nombre_alu}** (Nota: {res.get('nota_final')})")
+                with c2:
+                    pdf_bytes = generar_pdf_bytes(res)
                     st.download_button(
-                        label=f"Descargar PDF de {nombre_display}",
-                        data=pdf_bytes,
-                        file_name=f"Correccion_{nombre_display}.pdf",
+                        label="Descargar PDF",
+                        data=bytes(pdf_bytes),
+                        file_name=f"Devolucion_{nombre_alu}.pdf",
                         mime="application/pdf",
-                        key=f"pdf_{alu['Archivo']}_{idx}"
+                        key=f"dl_{res['Archivo']}"
                     )
-                except Exception as e:
-                    st.error(f"No se pudo generar este PDF específico por un error de caracteres.")
