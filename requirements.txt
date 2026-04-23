@@ -1,6 +1,7 @@
 streamlit
 groq
+python-docx
 docx2txt
 pymupdf
-pillow
 pandas
+fpdf
